@@ -148,7 +148,8 @@ ClaimLine is a multi-page web app with a top navigation:
 | **Dashboard** (`/`) | KPIs (customers, claims, open, needs-review, sanctioned, calls) + recent claims. |
 | **Customers** (`/customers`) | All policyholders with their language, policies, and claims. **＋ New customer** onboards a policyholder (+ optional first policy); open one for detail. |
 | **Claims** (`/claims`) | Every claim with policyholder, incident, language, billed total, and status. |
-| **Claim detail** (`/claims/:id`) | The case: each party, its call + structured result, the case total, and the **sanction** panel. |
+| **Claim detail** (`/claims/:id`) | The case: each party, its call + structured result, the case total, a **fraud/consistency check**, and the **sanction** panel. |
+| **Insights** (`/analytics`) | Business-impact analytics: agent-hours saved, calls placed/completed, fraud flagged, paid out, claims funnel, incident breakdown. |
 | **New claim** (`/submit`) | Submit a claim for a customer: pick policyholder, language, incident, and parties to call. |
 | **How it works** (`/how`) | The CALL-E `plan_call → run_call → get_call_run` flow diagram. |
 | **Log in** (`/login`) | Owner login (uses the server's key) or continue as a guest (bring your own key). |
@@ -198,9 +199,18 @@ when the guest views the claim.
 - **💳 Stripe payout (demo).** Once a claim is **approved** with an amount, **Pay out** disburses
   it. With `STRIPE_SECRET_KEY` (test mode) it creates a real Stripe PaymentIntent; without a key
   it records a **simulated success** — no real money moves. Payouts are idempotent per claim.
+- **🔎 Fraud & consistency check.** ClaimLine cross-checks the structured results it gathered
+  across parties and surfaces contradictions — e.g. the doctor says the injuries are *not*
+  consistent with the incident, a billed service date *precedes* the incident, or the bill
+  *exceeds* the policy's coverage — as a **Low / Medium / High** risk badge with reasons on the
+  claim page and in the report. It never accuses; a human still decides.
+- **📈 Insights.** The **`/analytics`** page turns the data into business impact: agent-hours
+  saved, calls placed/completed, fraud flagged, total paid out, the approve/reject funnel, and
+  claims by incident type.
 
-All three are **demo-safe by default** (no external keys required) and are driven from the
-claim page.
+All of the above are **demo-safe by default** (no external keys required) and are driven from the
+claim page. See [FEEDBACK.md](FEEDBACK.md) for hands-on developer feedback gathered while
+building on CALL-E.
 
 ---
 
@@ -432,7 +442,7 @@ claimline/
 │   ├── payments/   # PaymentGateway: Stripe (test mode) + simulated payout
 │   ├── notify/     # Slack / Teams webhook notifier + simulated fallback
 │   ├── store/      # node:sqlite store (customers, policies, claims, contacts, intents, results, decisions, payments)
-│   ├── services/   # tasks (scripts + language), dispatcher, reconciler, report (autopilot end report)
+│   ├── services/   # tasks (scripts + language), dispatcher, reconciler, report (autopilot end report), fraud (cross-party consistency)
 │   ├── server/     # Fastify app + multi-page HTML views + auth (owner/guest sessions)
 │   ├── mcp/        # MCP server + tools (agent-host integration)
 │   ├── app.ts      # application context wiring

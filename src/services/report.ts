@@ -1,5 +1,6 @@
 import type { CaseView } from "../app.js";
 import type { Payment } from "../domain/types.js";
+import type { FraudAssessment } from "./fraud.js";
 
 export interface ReportParty {
   name: string;
@@ -26,6 +27,7 @@ export interface CaseReport {
     decision: string | null;
     sanctionedAmount: number | null;
     payment: { status: string; provider: string; reference: string } | null;
+    fraud: { level: string; score: number; flags: string[] } | null;
     generatedAt: string;
   };
 }
@@ -46,7 +48,11 @@ function human(value: string): string {
 }
 
 /** Build a consolidated end-of-case report from an aggregated case view. */
-export function buildCaseReport(view: CaseView, payment?: Payment | null): CaseReport {
+export function buildCaseReport(
+  view: CaseView,
+  payment?: Payment | null,
+  fraud?: FraudAssessment | null,
+): CaseReport {
   const parties: ReportParty[] = view.contacts
     .filter((c) => c.intent) // only parties that were actually called
     .map((c) => ({
@@ -90,6 +96,12 @@ export function buildCaseReport(view: CaseView, payment?: Payment | null): CaseR
       `Payout: ${payment.status} — ${payment.amount} ${payment.currency} via ${payment.provider} (${payment.reference})`,
     );
   }
+  if (fraud && fraud.flags.length > 0) {
+    lines.push(`Fraud risk: ${fraud.level.toUpperCase()} (score ${fraud.score})`);
+    for (const f of fraud.flags) lines.push(`  ⚠ ${f.message}`);
+  } else if (fraud) {
+    lines.push("Fraud risk: LOW — no inconsistencies detected.");
+  }
 
   return {
     reference: view.claim.reference,
@@ -108,6 +120,9 @@ export function buildCaseReport(view: CaseView, payment?: Payment | null): CaseR
       sanctionedAmount: view.claimDecision?.sanctionedAmount ?? null,
       payment: payment
         ? { status: payment.status, provider: payment.provider, reference: payment.reference }
+        : null,
+      fraud: fraud
+        ? { level: fraud.level, score: fraud.score, flags: fraud.flags.map((f) => f.message) }
         : null,
       generatedAt: new Date().toISOString(),
     },

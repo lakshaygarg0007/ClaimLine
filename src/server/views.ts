@@ -228,6 +228,7 @@ const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/customers", label: "Customers" },
   { href: "/claims", label: "Claims" },
+  { href: "/analytics", label: "Insights" },
   { href: "/submit", label: "New claim" },
   { href: "/how", label: "How it works" },
 ];
@@ -992,6 +993,35 @@ export interface ClaimDetailExtras {
   notifyChannel?: string;
   /** Show the "Payment successful" pop-up (set right after a payout). */
   showPaidModal?: boolean;
+  /** Cross-party fraud / consistency assessment. */
+  fraud?: {
+    level: "low" | "medium" | "high";
+    score: number;
+    flags: { severity: "info" | "warn" | "high"; message: string }[];
+    summary: string;
+  } | null;
+}
+
+function fraudCard(extras: ClaimDetailExtras): string {
+  const f = extras.fraud;
+  if (!f) return "";
+  const palette = {
+    low: { bg: "#ecfdf5", fg: "#047857", bd: "#a7f3d0", icon: "🟢", label: "Low risk" },
+    medium: { bg: "#fffbeb", fg: "#b45309", bd: "#fde68a", icon: "🟠", label: "Medium risk" },
+    high: { bg: "#fef2f2", fg: "#b91c1c", bd: "#fecaca", icon: "🔴", label: "High risk" },
+  }[f.level];
+  const flagList = f.flags.length
+    ? `<ul style="margin:8px 0 0;padding-left:20px">${f.flags
+        .map((x) => `<li style="margin:2px 0">${escapeHtml(x.message)}</li>`)
+        .join("")}</ul>`
+    : `<div class="hint" style="margin-top:6px">No inconsistencies detected across the parties called.</div>`;
+  return `<div class="card" style="margin-top:16px;border-color:${palette.bd}">
+      <div class="card-head" style="background:${palette.bg}">
+        <h2 style="color:${palette.fg}">${palette.icon} Fraud &amp; consistency check — ${palette.label}</h2>
+        <div class="meta">Automated cross-party review (score ${f.score}/100). A human still decides.</div>
+      </div>
+      <div class="card-body">${flagList}</div>
+    </div>`;
 }
 
 /** A demo payout destination (UPI id) derived from the policyholder name. */
@@ -1101,6 +1131,7 @@ export function renderClaimDetail(
     ${needKey}
     ${claimActions(view, extras)}
     <div style="margin-top:14px">${renderCaseCard(view)}</div>
+    ${fraudCard(extras)}
     ${reportSection(view, extras)}
     ${paidModal(view, extras)}`;
   return layout(view.claim.reference, mode, body, {
@@ -1119,6 +1150,82 @@ const INCIDENT_TYPES = [
   "injury",
   "other",
 ];
+
+export interface AnalyticsData {
+  claims: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+  callsCompleted: number;
+  callsNeedsReview: number;
+  partiesCalled: number;
+  hoursSaved: number;
+  fraudFlagged: number;
+  fraudHigh: number;
+  paidOut: { currency: string; amount: number }[];
+  incidentBreakdown: { type: string; count: number }[];
+}
+
+export function renderAnalytics(
+  a: AnalyticsData,
+  mode: RunMode,
+  insurerName: string,
+  auth: AuthNav = { role: null, hasKey: false },
+): string {
+  const kpi = (value: string, label: string, accent?: string) =>
+    `<div class="stat"><div class="n" ${
+      accent ? `style="color:${accent}"` : ""
+    }>${escapeHtml(value)}</div><div class="l">${escapeHtml(label)}</div></div>`;
+
+  const paid =
+    a.paidOut.length > 0
+      ? a.paidOut.map((p) => `${p.amount} ${p.currency}`).join(" · ")
+      : "—";
+  const reviewRate =
+    a.partiesCalled > 0
+      ? `${Math.round((a.callsNeedsReview / a.partiesCalled) * 100)}%`
+      : "—";
+
+  const incidentRows = a.incidentBreakdown.length
+    ? a.incidentBreakdown
+        .map(
+          (i) =>
+            `<tr><td>${escapeHtml(prettyEnum(i.type))}</td><td>${i.count}</td></tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="2" class="hint">No claims yet.</td></tr>`;
+
+  const body = `
+    <div class="page-head"><h1 class="page">Insights</h1>
+      <div class="sub">Business impact across every claim — what ClaimLine's phone automation delivered.</div></div>
+
+    <div class="stats">
+      ${kpi(String(a.hoursSaved), "Agent-hours saved", "#2563eb")}
+      ${kpi(String(a.callsCompleted + a.callsNeedsReview), "Calls placed")}
+      ${kpi(String(a.callsCompleted), "Calls completed", "#047857")}
+      ${kpi(String(a.fraudFlagged), "Fraud flagged", a.fraudFlagged ? "#b91c1c" : undefined)}
+      ${kpi(paid, "Paid out")}
+      ${kpi(reviewRate, "Needs-review rate")}
+    </div>
+
+    <div class="card" style="margin-top:16px"><div class="card-head">
+      <h2>Claims funnel</h2><div class="meta">Human-owned outcomes — ClaimLine only gathers facts.</div></div>
+      <div class="card-body">
+        <div class="stats">
+          ${kpi(String(a.claims), "Total claims")}
+          ${kpi(String(a.pending), "Pending review")}
+          ${kpi(String(a.approved), "Approved", "#047857")}
+          ${kpi(String(a.rejected), "Rejected", "#b91c1c")}
+        </div>
+      </div></div>
+
+    <div class="card" style="margin-top:16px"><div class="card-head"><h2>Claims by incident type</h2></div>
+      <table class="list"><thead><tr><th>Incident</th><th>Claims</th></tr></thead>
+      <tbody>${incidentRows}</tbody></table></div>
+
+    <div class="hint" style="margin-top:12px">Agent-hours saved assumes ~12 minutes of manual work per party call that ClaimLine placed instead.</div>`;
+  return layout("Insights", mode, body, { currentPath: "/analytics", insurerName, auth });
+}
 
 export function renderSubmit(
   customers: PublicCustomer[],

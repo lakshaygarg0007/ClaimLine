@@ -28,6 +28,7 @@ import type {
 import { createNotifier, type Notifier, type NotifyResult } from "./notify/index.js";
 import { createPaymentGateway, type PaymentGateway } from "./payments/index.js";
 import { Dispatcher } from "./services/dispatcher.js";
+import { assessFraud, type FraudAssessment } from "./services/fraud.js";
 import { Reconciler } from "./services/reconciler.js";
 import { buildCaseReport, type CaseReport } from "./services/report.js";
 import { roleToCallType } from "./services/tasks.js";
@@ -570,6 +571,85 @@ export class ClaimLineApp {
     };
   }
 
+  /** Business-impact analytics across every claim (for the Insights page). */
+  analytics(): {
+    claims: number;
+    approved: number;
+    rejected: number;
+    pending: number;
+    callsCompleted: number;
+    callsNeedsReview: number;
+    partiesCalled: number;
+    hoursSaved: number;
+    fraudFlagged: number;
+    fraudHigh: number;
+    paidOut: { currency: string; amount: number }[];
+    incidentBreakdown: { type: string; count: number }[];
+  } {
+    const cases = this.listCaseViews();
+    let approved = 0;
+    let rejected = 0;
+    let pending = 0;
+    let callsCompleted = 0;
+    let callsNeedsReview = 0;
+    let partiesCalled = 0;
+    let fraudFlagged = 0;
+    let fraudHigh = 0;
+    const paid = new Map<string, number>();
+    const incidents = new Map<string, number>();
+
+    for (const c of cases) {
+      const d = c.claimDecision?.decision;
+      if (d === "approved") approved += 1;
+      else if (d === "rejected") rejected += 1;
+      else pending += 1;
+
+      for (const row of c.contacts) {
+        if (!row.intent) continue;
+        partiesCalled += 1;
+        if (row.intent.state === "terminal_verified") callsCompleted += 1;
+        else if (row.intent.state === "needs_human") callsNeedsReview += 1;
+      }
+      for (const row of c.otherCalls) {
+        if (row.intent.state === "terminal_verified") callsCompleted += 1;
+        else if (row.intent.state === "needs_human") callsNeedsReview += 1;
+      }
+
+      const fraud = this.assessClaimFraud(c.claim.id);
+      if (fraud && fraud.level !== "low") fraudFlagged += 1;
+      if (fraud && fraud.level === "high") fraudHigh += 1;
+
+      const payment = this.store.getLatestPaymentByClaim(c.claim.id);
+      if (payment && payment.status === "succeeded") {
+        paid.set(payment.currency, (paid.get(payment.currency) ?? 0) + payment.amount);
+      }
+
+      incidents.set(c.claim.incidentType, (incidents.get(c.claim.incidentType) ?? 0) + 1);
+    }
+
+    // Assume ~12 minutes of manual work saved per completed/attempted party call.
+    const MINUTES_PER_CALL = 12;
+    const hoursSaved =
+      Math.round(((callsCompleted + callsNeedsReview) * MINUTES_PER_CALL) / 6) / 10;
+
+    return {
+      claims: cases.length,
+      approved,
+      rejected,
+      pending,
+      callsCompleted,
+      callsNeedsReview,
+      partiesCalled,
+      hoursSaved,
+      fraudFlagged,
+      fraudHigh,
+      paidOut: [...paid.entries()].map(([currency, amount]) => ({ currency, amount })),
+      incidentBreakdown: [...incidents.entries()]
+        .map(([type, count]) => ({ type, count }))
+        .sort((a, b) => b.count - a.count),
+    };
+  }
+
   private computeTotals(claimId: string): CaseTotals {
     let billedTotal: number | null = null;
     let currency: string | null = null;
@@ -645,11 +725,24 @@ export class ClaimLineApp {
     return { dispatched, report, notified: sent };
   }
 
+  /** Cross-party fraud / consistency assessment for a claim (null if unknown). */
+  assessClaimFraud(claimId: string): FraudAssessment | null {
+    const view = this.getCaseView(claimId);
+    if (!view) return null;
+    const claim = this.store.getClaim(claimId);
+    const policy = claim?.policyId ? this.store.getPolicy(claim.policyId) : null;
+    return assessFraud(view, { coverageLimit: policy?.coverageLimit ?? null });
+  }
+
   /** Build the consolidated end-of-case report for a claim (incl. any payout). */
   buildReportFor(claimId: string): CaseReport | null {
     const view = this.getCaseView(claimId);
     if (!view) return null;
-    return buildCaseReport(view, this.store.getLatestPaymentByClaim(claimId));
+    return buildCaseReport(
+      view,
+      this.store.getLatestPaymentByClaim(claimId),
+      this.assessClaimFraud(claimId),
+    );
   }
 
   /**

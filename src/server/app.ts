@@ -19,6 +19,7 @@ import {
 } from "./auth.js";
 import {
   layout,
+  renderAnalytics,
   renderClaimDetail,
   renderClaims,
   renderContactPreview,
@@ -230,6 +231,12 @@ export function buildServer(app: ClaimLineApp): FastifyInstance {
     reply.type("text/html").send(renderClaims(app.listCaseViews(), app.config.mode, insurer(), authOf(req)));
   });
 
+  server.get("/analytics", async (req, reply) => {
+    reply
+      .type("text/html")
+      .send(renderAnalytics(app.analytics(), app.config.mode, insurer(), authOf(req)));
+  });
+
   server.get<{ Params: { id: string }; Querystring: { paid?: string } }>(
     "/claims/:id",
     async (req, reply) => {
@@ -245,12 +252,14 @@ export function buildServer(app: ClaimLineApp): FastifyInstance {
         view.contacts.some((c) => c.intent) || view.otherCalls.length > 0;
       const flags = app.store.getClaimAutopilot(claimId);
       const payment = app.getLatestPayment(claimId);
+      const fraud = hasCalls ? app.assessClaimFraud(claimId) : null;
       reply.type("text/html").send(
         renderClaimDetail(view, app.config.mode, insurer(), authOf(req), {
           reportText: hasCalls ? app.buildReportFor(claimId)?.text ?? null : null,
           reportSentAt: flags.reportSentAt,
           notifyChannel: app.notifier.channel,
           showPaidModal: req.query.paid === "1",
+          fraud,
           payment: payment
             ? {
                 status: payment.status,
