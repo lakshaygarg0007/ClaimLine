@@ -41,3 +41,9 @@ services:
         value: /app/data/claimline.db
       - key: CLAIMLINE_AUTOSEED
         value: "true"
+      # Optional integrations — set in the dashboard, or leave unset to use the
+      # built-in simulated fallbacks (Slack report / Stripe payout still work).
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
